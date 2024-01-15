@@ -1,0 +1,12 @@
+{
+  "tasks": {
+    "dev": "deno.old run --allow-all --unstable --watch main.tsx"
+  },
+  "compilerOptions": {
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom"
+    ]
+  }
+}
