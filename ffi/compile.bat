@@ -1,2 +1,2 @@
 @echo off
-g++ -shared -o mouse.so -fPIC mouse.cpp
+g++ -shared -o mouse.so -fPIC -mwindows -lgdi32 mouse.cpp

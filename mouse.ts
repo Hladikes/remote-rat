@@ -19,4 +19,8 @@ export default Deno.dlopen("./ffi/mouse.so", {
     parameters: [],
     result: "u32",
   },
+  screenshot: {
+    parameters: ["u32", "u32"],
+    result: "pointer",
+  },
 });

@@ -6,12 +6,42 @@ import {
   Kompakt
 } from "https://gist.githubusercontent.com/Hladikes/a4fdfaf889061b5877e7c0fd6817a51a/raw/e4203d646dfe21199867845b0bab1c52fa97a42c/kompakt.ts";
 import { Hono } from "https://deno.land/x/hono@v3.8.1/mod.ts";
+import { createCanvas, EmulatedCanvas2DContext } from "https://deno.land/x/canvas@v1.4.1/mod.ts"
 import MouseLib from './mouse.ts'
 
 const app = new Hono();
 const k = new Kompakt({
   includeReset: "tailwind",
 });
+
+const screenWidth = MouseLib.symbols.getScreenWidth()
+const screenHeight = MouseLib.symbols.getScreenHeight()
+
+app.get('/screen', (c) => {
+  const ptr = MouseLib.symbols.screenshot(screenWidth, screenHeight)
+  // @ts-ignore: This API is unstable
+  const view = new Deno.UnsafePointerView(ptr)
+  const canvas = createCanvas(screenWidth, screenHeight);
+  const ctx: EmulatedCanvas2DContext = canvas.getContext("2d");
+  const image = new Uint8ClampedArray(screenWidth * screenHeight * 4)
+
+  view.copyInto(image)
+  ctx.putImageData({
+    data: image,
+    width: screenWidth,
+    height: screenHeight,
+  }, 0, 0)
+
+  const buffer = canvas.toBuffer()
+
+  return new Response(buffer, {
+    status: 200,
+    headers: {
+      'Content-Type': 'image/png',
+      'Content-Length': String(buffer.length),
+    },
+  })
+})
 
 app.get('/ws', (c) => {
   const { response, socket } = Deno.upgradeWebSocket(c.req.raw)
@@ -33,6 +63,7 @@ app.get('/ws', (c) => {
     
       case 0xBB: {
         MouseLib.symbols.mouseMove(false, buffer[1], buffer[2])
+        console.log({ x: buffer[1], y: buffer[2] })
         break
       }
 
@@ -56,24 +87,28 @@ app.get('/', (_c) => k.html(
             'bg-transparent text-black': relative,
           }"
           v-on:touchstart="relative = !relative"
-          class="w-32 h-32 flex items-center justify-center rounded-md border border-black touch-none pointer-events-auto">
+          class="w-24 h-24 flex items-center justify-center rounded-md border border-black touch-none pointer-events-auto">
           <span class="text-4xl">{'{{ relative ? "R" : "A" }}'}</span>
         </button>
-        
+
         <button 
           v-bind:class="{
             'bg-black': pressing,
             'bg-transparent': !pressing,
           }"
           v-on:touchstart="pressing = !pressing"
-          class="w-32 h-32 rounded-md border border-black touch-none pointer-events-auto"></button>
+          class="w-24 h-24 rounded-md border border-black touch-none pointer-events-auto"></button>
       </div>
       <div 
         v-on:touchmove="handleTouch($event)"
         v-on:touchstart="handleTouch($event)"
         v-on:touchend="handleTouch($event)"
         v-on:click="handleClick()"
-        class="flex-1 rounded-md border border-black touch-none pointer-events-auto">
+        class="flex-1 rounded-md border border-black touch-none pointer-events-auto overflow-hidden">
+        <img 
+          v-bind:src="`/screen?t=${timestamp}` " 
+          alt="Currently displayed screen" 
+          class="object-cover object-left-bottom h-full" />
       </div>
     </div>
 
@@ -83,6 +118,7 @@ app.get('/', (_c) => k.html(
 
       createApp({
         setup() {
+          const timestamp = ref(Date.now())
           const pressing = ref(false)
           const relative = ref(true)
           const buffer = new Int32Array(3)
@@ -99,12 +135,12 @@ app.get('/', (_c) => k.html(
 
           function handleTouch(ev: TouchEvent) {
             const br = (ev?.target as HTMLElement)?.getBoundingClientRect()
-            const {clientX, clientY} = ev.touches[0] ?? {clientX: prevClientX, clientY: prevClientY}
+            const { clientX, clientY } = ev.touches[0] ?? {clientX: prevClientX, clientY: prevClientY}
             const [x, y] = [clientX - br.left, clientY - br.top]
 
             if (ev.type === 'touchstart' && !relative.value) {
               if (ev.touches.length === 1) {
-                buffer.set([0xBB, clientX, clientY])
+                buffer.set([0xBB, x, y])
                 socket.send(buffer)
                 pressing.value = true
               }
@@ -112,7 +148,7 @@ app.get('/', (_c) => k.html(
             
             if (ev.type === 'touchmove') {
               if (ev.touches.length === 1) {
-                buffer.set(relative.value ? [0xFF, x - prevX, y - prevY] : [0xBB, clientX, clientY])
+                buffer.set(relative.value ? [0xFF, x - prevX, y - prevY] : [0xBB, x, y])
                 socket.send(buffer)
               } else {
                 buffer.set([0xDD, x - prevX, y - prevY])
@@ -135,7 +171,7 @@ app.get('/', (_c) => k.html(
             nextTick(() => pressing.value = false)
           }
 
-          return { pressing, relative, handleTouch, handleClick } 
+          return { timestamp, pressing, relative, handleTouch, handleClick } 
         },
       }).mount('#app')
     })}
