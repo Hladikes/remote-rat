@@ -26,14 +26,15 @@ extern "C" {
     return GetSystemMetrics(SM_CYSCREEN);
   };
 
-  uint8_t* screenshot(uint32_t width, uint32_t height) {
+  void screenshot(uint8_t* buffer, uint32_t width, uint32_t height) {
     HDC hScreenDC = GetDC(nullptr);
     HDC hMemoryDC = CreateCompatibleDC(hScreenDC);
     HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);
     HBITMAP hOldBitmap = static_cast<HBITMAP>(SelectObject(hMemoryDC, hBitmap));
+
     BitBlt(hMemoryDC, 0, 0, width, height, hScreenDC, 0, 0, SRCCOPY);
 
-    BITMAPINFO bmpInfo = {0};
+    static BITMAPINFO bmpInfo = {0};
     bmpInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmpInfo.bmiHeader.biWidth = width;
     bmpInfo.bmiHeader.biHeight = -height;
@@ -42,7 +43,6 @@ extern "C" {
     bmpInfo.bmiHeader.biCompression = BI_RGB;
 
     uint32_t bufferSize = width * height * 4;
-    uint8_t* buffer = new uint8_t[bufferSize];
 
     GetDIBits(hMemoryDC, hBitmap, 0, height, buffer, &bmpInfo, DIB_RGB_COLORS);
 
@@ -56,11 +56,10 @@ extern "C" {
       buffer[i + 2] = b;
     }
 
-    hBitmap = static_cast<HBITMAP>(SelectObject(hMemoryDC, hOldBitmap));
-    DeleteDC(hMemoryDC);
-    DeleteDC(hScreenDC);
+    SelectObject(hMemoryDC, hOldBitmap);
+    DeleteObject(hBitmap);
 
-    return buffer;
-    delete[] buffer;
+    DeleteDC(hMemoryDC);
+    ReleaseDC(nullptr, hScreenDC);
   };
 };

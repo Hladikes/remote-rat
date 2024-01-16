@@ -9,25 +9,23 @@ import { Hono } from "https://deno.land/x/hono@v3.8.1/mod.ts";
 import { createCanvas, EmulatedCanvas2DContext } from "https://deno.land/x/canvas@v1.4.1/mod.ts"
 import MouseLib from './mouse.ts'
 
-const app = new Hono();
+const app = new Hono()
 const k = new Kompakt({
-  includeReset: "tailwind",
-});
+  includeReset: 'tailwind',
+})
 
 const screenWidth = MouseLib.symbols.getScreenWidth()
 const screenHeight = MouseLib.symbols.getScreenHeight()
+const screenBuffer = new Uint8ClampedArray(screenWidth * screenHeight * 4)
+const scrrenBufferPtr = Deno.UnsafePointer.of(screenBuffer)
+const canvas = createCanvas(screenWidth, screenHeight)
+const ctx: EmulatedCanvas2DContext = canvas.getContext('2d')
 
-app.get('/screen', (c) => {
-  const ptr = MouseLib.symbols.screenshot(screenWidth, screenHeight)
-  // @ts-ignore: This API is unstable
-  const view = new Deno.UnsafePointerView(ptr)
-  const canvas = createCanvas(screenWidth, screenHeight);
-  const ctx: EmulatedCanvas2DContext = canvas.getContext("2d");
-  const image = new Uint8ClampedArray(screenWidth * screenHeight * 4)
+app.get('/screen', async (c) => {
+  await MouseLib.symbols.screenshot(scrrenBufferPtr, screenWidth, screenHeight)
 
-  view.copyInto(image)
   ctx.putImageData({
-    data: image,
+    data: screenBuffer,
     width: screenWidth,
     height: screenHeight,
   }, 0, 0)
@@ -63,7 +61,6 @@ app.get('/ws', (c) => {
     
       case 0xBB: {
         MouseLib.symbols.mouseMove(false, buffer[1], buffer[2])
-        console.log({ x: buffer[1], y: buffer[2] })
         break
       }
 
@@ -119,6 +116,11 @@ app.get('/', (_c) => k.html(
       createApp({
         setup() {
           const timestamp = ref(Date.now())
+
+          setInterval(() => {
+            timestamp.value = Date.now()
+          }, 1_000)
+
           const pressing = ref(false)
           const relative = ref(true)
           const buffer = new Int32Array(3)
@@ -156,8 +158,10 @@ app.get('/', (_c) => k.html(
               }
             }
 
-            if (ev.type === 'touchend' && !relative.value) {
-              pressing.value = false
+            if (ev.type === 'touchend') {
+              if (!relative.value) {
+                pressing.value = false
+              }
             }
 
             prevX = x
