@@ -1,12 +1,8 @@
 /**@jsx jsx */
 /**@jsxFrag jsxFrag */
-import {
-  jsx,
-  jsxFrag,
-  Kompakt
-} from "https://gist.githubusercontent.com/Hladikes/a4fdfaf889061b5877e7c0fd6817a51a/raw/e4203d646dfe21199867845b0bab1c52fa97a42c/kompakt.ts";
-import { Hono } from "https://deno.land/x/hono@v3.8.1/mod.ts";
-import { createCanvas, EmulatedCanvas2DContext } from "https://deno.land/x/canvas@v1.4.1/mod.ts"
+import { jsx, jsxFrag, Kompakt } from 'https://gist.githubusercontent.com/Hladikes/a4fdfaf889061b5877e7c0fd6817a51a/raw/e4203d646dfe21199867845b0bab1c52fa97a42c/kompakt.ts';
+import { Hono } from 'https://deno.land/x/hono@v3.8.1/mod.ts';
+import { createCanvas, EmulatedCanvas2DContext } from 'https://deno.land/x/canvas@v1.4.1/mod.ts'
 import MouseLib from './mouse.ts'
 
 const app = new Hono()
@@ -14,59 +10,50 @@ const k = new Kompakt({
   includeReset: 'tailwind',
 })
 
-const screenWidth = MouseLib.symbols.getScreenWidth()
-const screenHeight = MouseLib.symbols.getScreenHeight()
+const screenWidth = MouseLib.symbols.get_screen_width()
+const screenHeight = MouseLib.symbols.get_screen_height()
 const screenBuffer = new Uint8ClampedArray(screenWidth * screenHeight * 4)
 const scrrenBufferPtr = Deno.UnsafePointer.of(screenBuffer)
-const canvas = createCanvas(screenWidth, screenHeight)
-const ctx: EmulatedCanvas2DContext = canvas.getContext('2d')
-
-app.get('/screen', async (c) => {
-  await MouseLib.symbols.screenshot(scrrenBufferPtr, screenWidth, screenHeight)
-
-  ctx.putImageData({
-    data: screenBuffer,
-    width: screenWidth,
-    height: screenHeight,
-  }, 0, 0)
-
-  const buffer = canvas.toBuffer()
-
-  return new Response(buffer, {
-    status: 200,
-    headers: {
-      'Content-Type': 'image/png',
-      'Content-Length': String(buffer.length),
-    },
-  })
-})
 
 app.get('/ws', (c) => {
   const { response, socket } = Deno.upgradeWebSocket(c.req.raw)
 
+  console.log(socket)
+
   socket.addEventListener('message', (ev) => {
     const buffer = new Int32Array(ev.data)
 
+    // ;(ev.data as Blob).
+
     switch (buffer[0]) {
       case 0xAA: {
-        MouseLib.symbols.mouseClick(buffer[2] === 1)
+        MouseLib.symbols.mouse_click(buffer[2] === 1)
         break
       }
     
       case 0xFF: {
         const k = 2.65
-        MouseLib.symbols.mouseMove(true, buffer[1] * k | 0, buffer[2] * k | 0)
+        MouseLib.symbols.mouse_move(true, buffer[1] * k | 0, buffer[2] * k | 0)
         break
       }
     
       case 0xBB: {
-        MouseLib.symbols.mouseMove(false, buffer[1], buffer[2])
+        MouseLib.symbols.mouse_move(false, buffer[1], buffer[2])
         break
       }
 
       case 0xDD: {
-        MouseLib.symbols.mouseScroll(buffer[1], buffer[2])
-        break;
+        MouseLib.symbols.mouse_scroll(buffer[1], buffer[2])
+        break
+      }
+
+      case 0xEE: {
+        console.log('yah')
+        MouseLib.symbols.screenshot(scrrenBufferPtr, screenWidth, screenHeight).then(() => {
+          socket.send(screenBuffer)
+        })
+
+        break
       }
     }
   })
@@ -102,28 +89,35 @@ app.get('/', (_c) => k.html(
         v-on:touchend="handleTouch($event)"
         v-on:click="handleClick()"
         class="flex-1 rounded-md border border-black touch-none pointer-events-auto overflow-hidden">
-        <img 
-          v-bind:src="`/screen?t=${timestamp}` " 
-          alt="Currently displayed screen" 
-          class="object-cover object-left-bottom h-full" />
+        <canvas ref="canvas" class="w-full h-full"></canvas>
       </div>
     </div>
 
     {k.script(async () => {
-      const { createApp, ref, watch, nextTick } = await import("https://unpkg.com/vue@3.3.4/dist/vue.esm-browser.js")
+      const { createApp, ref, watch, nextTick, onMounted } = await import("https://unpkg.com/vue@3.3.4/dist/vue.esm-browser.js")
       const socket = new WebSocket(`ws://${location.host}/ws`)
 
       createApp({
         setup() {
-          const timestamp = ref(Date.now())
+          const canvas = ref(null)
 
-          setInterval(() => {
-            timestamp.value = Date.now()
-          }, 1_000)
+          onMounted(() => {
+            const ctx: CanvasRenderingContext2D = canvas.value.getContext('2d')
+            
+            socket.onmessage = (ev: MessageEvent) => {
+              console.log(ev.data.constructor)
+            }
+          })
 
           const pressing = ref(false)
           const relative = ref(true)
           const buffer = new Int32Array(3)
+
+          setInterval(() => {
+            // buffer.set([0xEE, 0, 0])
+            // socket.send(buffer)
+            // socket.send('kokot')
+          }, 1_000)
 
           watch(pressing, () => {
             buffer.set([0xAA, 0, pressing.value ? 1 : 0])
@@ -175,7 +169,7 @@ app.get('/', (_c) => k.html(
             nextTick(() => pressing.value = false)
           }
 
-          return { timestamp, pressing, relative, handleTouch, handleClick } 
+          return { canvas, pressing, relative, handleTouch, handleClick } 
         },
       }).mount('#app')
     })}

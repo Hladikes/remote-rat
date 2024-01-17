@@ -1,8 +1,8 @@
-#include <Windows.h>
+#include <windows.h>
 #include <stdint.h>
 
 extern "C" {
-  void mouseMove(bool relative, int32_t x, int32_t y) {
+  void mouse_move(bool relative, int32_t x, int32_t y) {
     if (relative) {
       mouse_event(MOUSEEVENTF_MOVE, x, y, 0, 0);
     } else {
@@ -10,19 +10,19 @@ extern "C" {
     }
   };
   
-  void mouseClick(bool down) {
+  void mouse_click(bool down) {
     mouse_event(down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
   };
 
-  void mouseScroll(int32_t dx, int32_t dy) {
+  void mouse_scroll(int32_t dx, int32_t dy) {
     mouse_event(MOUSEEVENTF_WHEEL, 0, 0, dy * 2, 0);
   };
 
-  uint32_t getScreenWidth() {
+  uint32_t get_screen_width() {
     return GetSystemMetrics(SM_CXSCREEN);
   };
   
-  uint32_t getScreenHeight() {
+  uint32_t get_screen_height() {
     return GetSystemMetrics(SM_CYSCREEN);
   };
 
@@ -48,11 +48,9 @@ extern "C" {
 
     for (uint32_t i = 0; i < bufferSize; i += 4) {
       uint8_t b = buffer[i];
-      uint8_t g = buffer[i + 1];
       uint8_t r = buffer[i + 2]; 
 
       buffer[i] = r;
-      buffer[i + 1] = g;
       buffer[i + 2] = b;
     }
 

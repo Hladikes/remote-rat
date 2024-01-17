@@ -1,21 +1,21 @@
 export default Deno.dlopen("./ffi/mouse.so", {
-  mouseMove: {
+  mouse_move: {
     parameters: ["bool", "i32", "i32"],
     result: "void",
   },
-  mouseClick: {
+  mouse_click: {
     parameters: ["bool"],
     result: "void",
   },
-  mouseScroll: {
+  mouse_scroll: {
     parameters: ["i32", "i32"],
     result: "void",
   },
-  getScreenWidth: {
+  get_screen_width: {
     parameters: [],
     result: "u32",
   },
-  getScreenHeight: {
+  get_screen_height: {
     parameters: [],
     result: "u32",
   },
