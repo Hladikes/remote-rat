@@ -2,7 +2,6 @@
 /**@jsxFrag jsxFrag */
 import { jsx, jsxFrag, Kompakt } from 'https://gist.githubusercontent.com/Hladikes/a4fdfaf889061b5877e7c0fd6817a51a/raw/e4203d646dfe21199867845b0bab1c52fa97a42c/kompakt.ts';
 import { Hono } from 'https://deno.land/x/hono@v3.8.1/mod.ts';
-import { createCanvas, EmulatedCanvas2DContext } from 'https://deno.land/x/canvas@v1.4.1/mod.ts'
 import MouseLib from './mouse.ts'
 
 const app = new Hono()
@@ -18,12 +17,8 @@ const scrrenBufferPtr = Deno.UnsafePointer.of(screenBuffer)
 app.get('/ws', (c) => {
   const { response, socket } = Deno.upgradeWebSocket(c.req.raw)
 
-  console.log(socket)
-
-  socket.addEventListener('message', (ev) => {
-    const buffer = new Int32Array(ev.data)
-
-    // ;(ev.data as Blob).
+  socket.addEventListener('message', async (ev: MessageEvent<Blob>) => {
+    const buffer = new Int32Array(await ev.data.arrayBuffer())
 
     switch (buffer[0]) {
       case 0xAA: {
@@ -48,7 +43,6 @@ app.get('/ws', (c) => {
       }
 
       case 0xEE: {
-        console.log('yah')
         MouseLib.symbols.screenshot(scrrenBufferPtr, screenWidth, screenHeight).then(() => {
           socket.send(screenBuffer)
         })
@@ -84,6 +78,7 @@ app.get('/', (_c) => k.html(
           class="w-24 h-24 rounded-md border border-black touch-none pointer-events-auto"></button>
       </div>
       <div 
+        ref="container"
         v-on:touchmove="handleTouch($event)"
         v-on:touchstart="handleTouch($event)"
         v-on:touchend="handleTouch($event)"
@@ -99,25 +94,32 @@ app.get('/', (_c) => k.html(
 
       createApp({
         setup() {
-          const canvas = ref(null)
-
-          onMounted(() => {
-            const ctx: CanvasRenderingContext2D = canvas.value.getContext('2d')
-            
-            socket.onmessage = (ev: MessageEvent) => {
-              console.log(ev.data.constructor)
-            }
-          })
-
           const pressing = ref(false)
           const relative = ref(true)
           const buffer = new Int32Array(3)
+          const container = ref(null)
+          const canvas = ref(null)
 
-          setInterval(() => {
-            // buffer.set([0xEE, 0, 0])
-            // socket.send(buffer)
-            // socket.send('kokot')
-          }, 1_000)
+          onMounted(() => {
+            const containerBoundRect = container.value.getBoundingClientRect()
+            canvas.value.width = containerBoundRect.width
+            canvas.value.height = containerBoundRect.height
+
+            const ctx: CanvasRenderingContext2D = canvas.value.getContext('2d')
+            const imageData = new ImageData(1920, 1080)
+            
+            socket.onmessage = async (ev) => {
+              const receivedData = new Uint8ClampedArray(await ev.data.arrayBuffer())
+              imageData.data.set(receivedData)
+              ctx.putImageData(imageData, 0, 0)
+            }
+
+            setInterval(() => {
+              buffer.set([0xEE])
+              socket.send(buffer)
+            }, 1_000)
+          })
+
 
           watch(pressing, () => {
             buffer.set([0xAA, 0, pressing.value ? 1 : 0])
@@ -169,7 +171,7 @@ app.get('/', (_c) => k.html(
             nextTick(() => pressing.value = false)
           }
 
-          return { canvas, pressing, relative, handleTouch, handleClick } 
+          return { container, canvas, pressing, relative, handleTouch, handleClick } 
         },
       }).mount('#app')
     })}
