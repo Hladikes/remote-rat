@@ -17,8 +17,8 @@ const scrrenBufferPtr = Deno.UnsafePointer.of(screenBuffer)
 app.get('/ws', (c) => {
   const { response, socket } = Deno.upgradeWebSocket(c.req.raw)
 
-  socket.addEventListener('message', async (ev: MessageEvent<Blob>) => {
-    const buffer = new Int32Array(await ev.data.arrayBuffer())
+  socket.addEventListener('message', (ev: MessageEvent) => {
+    const buffer = new Int32Array(ev.data)
 
     switch (buffer[0]) {
       case 0xAA: {
@@ -65,7 +65,7 @@ app.get('/', (_c) => k.html(
             'bg-transparent text-black': relative,
           }"
           v-on:touchstart="relative = !relative"
-          class="w-24 h-24 flex items-center justify-center rounded-md border border-black touch-none pointer-events-auto">
+          class="w-24 h-24 flex items-center justify-center rounded-md border border-stone-300 touch-none pointer-events-auto">
           <span class="text-4xl">{'{{ relative ? "R" : "A" }}'}</span>
         </button>
 
@@ -75,16 +75,22 @@ app.get('/', (_c) => k.html(
             'bg-transparent': !pressing,
           }"
           v-on:touchstart="pressing = !pressing"
-          class="w-24 h-24 rounded-md border border-black touch-none pointer-events-auto"></button>
+          class="w-24 h-24 rounded-md border border-stone-300 touch-none pointer-events-auto"></button>
       </div>
-      <div 
-        ref="container"
-        v-on:touchmove="handleTouch($event)"
-        v-on:touchstart="handleTouch($event)"
-        v-on:touchend="handleTouch($event)"
-        v-on:click="handleClick()"
-        class="flex-1 rounded-md border border-black touch-none pointer-events-auto overflow-hidden">
-        <canvas ref="canvas" class="w-full h-full"></canvas>
+      <div class="flex-1 flex flex-col space-y-3">
+        <div class="flex space-x-3">
+          <input v-model="offsetX" min="0" max="1000" step="10" type="range" class="flex-1" />
+          <input v-model="offsetY" min="0" max="1000" step="10" type="range" class="flex-1" />
+        </div>
+        <div 
+          ref="container"
+          v-on:touchmove="handleTouch($event)"
+          v-on:touchstart="handleTouch($event)"
+          v-on:touchend="handleTouch($event)"
+          v-on:click="handleClick()"
+          class="flex-1 rounded-md border border-stone-300 touch-none pointer-events-auto overflow-hidden">
+          <canvas ref="canvas" class="w-full h-full"></canvas>
+        </div>
       </div>
     </div>
 
@@ -94,11 +100,14 @@ app.get('/', (_c) => k.html(
 
       createApp({
         setup() {
+          const offsetX = ref(0)
+          const offsetY = ref(0)
           const pressing = ref(false)
           const relative = ref(true)
           const buffer = new Int32Array(3)
           const container = ref(null)
           const canvas = ref(null)
+          const imageData = new ImageData(1920, 1080)
 
           onMounted(() => {
             const containerBoundRect = container.value.getBoundingClientRect()
@@ -106,18 +115,25 @@ app.get('/', (_c) => k.html(
             canvas.value.height = containerBoundRect.height
 
             const ctx: CanvasRenderingContext2D = canvas.value.getContext('2d')
-            const imageData = new ImageData(1920, 1080)
             
+            const redraw = () => {
+              ctx.clearRect(0, 0, containerBoundRect.width, containerBoundRect.height)
+              ctx.putImageData(imageData, -offsetX.value, -offsetY.value)
+            }
+
             socket.onmessage = async (ev) => {
               const receivedData = new Uint8ClampedArray(await ev.data.arrayBuffer())
               imageData.data.set(receivedData)
-              ctx.putImageData(imageData, 0, 0)
+              redraw()
             }
+
+            watch(offsetX, () => redraw())
+            watch(offsetY, () => redraw())
 
             setInterval(() => {
               buffer.set([0xEE])
               socket.send(buffer)
-            }, 1_000)
+            }, 1000)
           })
 
 
@@ -138,7 +154,7 @@ app.get('/', (_c) => k.html(
 
             if (ev.type === 'touchstart' && !relative.value) {
               if (ev.touches.length === 1) {
-                buffer.set([0xBB, x, y])
+                buffer.set([0xBB, x + Number(offsetX.value), y + Number(offsetY.value)])
                 socket.send(buffer)
                 pressing.value = true
               }
@@ -146,7 +162,7 @@ app.get('/', (_c) => k.html(
             
             if (ev.type === 'touchmove') {
               if (ev.touches.length === 1) {
-                buffer.set(relative.value ? [0xFF, x - prevX, y - prevY] : [0xBB, x, y])
+                buffer.set(relative.value ? [0xFF, x - prevX, y - prevY] : [0xBB, x + Number(offsetX.value), y + Number(offsetY.value)])
                 socket.send(buffer)
               } else {
                 buffer.set([0xDD, x - prevX, y - prevY])
@@ -171,7 +187,7 @@ app.get('/', (_c) => k.html(
             nextTick(() => pressing.value = false)
           }
 
-          return { container, canvas, pressing, relative, handleTouch, handleClick } 
+          return { offsetX, offsetY, container, canvas, pressing, relative, handleTouch, handleClick } 
         },
       }).mount('#app')
     })}
