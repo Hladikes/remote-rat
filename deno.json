@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "dev": "deno run --allow-all --unstable --watch main.tsx"
+    "dev": "deno run --allow-all --unstable-ffi --watch main.tsx"
   },
   "compilerOptions": {
     "lib": [
