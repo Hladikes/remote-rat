@@ -1,18 +1,54 @@
 /**@jsx jsx */
 /**@jsxFrag jsxFrag */
-import { jsx, jsxFrag, Kompakt } from 'https://gist.githubusercontent.com/Hladikes/a4fdfaf889061b5877e7c0fd6817a51a/raw/e4203d646dfe21199867845b0bab1c52fa97a42c/kompakt.ts';
-import { Hono } from 'https://deno.land/x/hono@v3.8.1/mod.ts';
+import { jsx, jsxFrag, Kompakt, Props } from "https://gist.githubusercontent.com/Hladikes/a4fdfaf889061b5877e7c0fd6817a51a/raw/fbca4cd1621ff4115098d5aca0f48e87bc1cef50/kompakt.ts";
+import { Context, Hono } from "https://deno.land/x/hono@v3.12.11/mod.ts";
 import MouseLib from './mouse.ts'
 
 const app = new Hono()
 const k = new Kompakt({
-  includeReset: 'tailwind',
+  honoInstance: app,
 })
 
-const screenWidth = MouseLib.symbols.get_screen_width()
-const screenHeight = MouseLib.symbols.get_screen_height()
-const screenBuffer = new Uint8ClampedArray(screenWidth * screenHeight * 4)
-const scrrenBufferPtr = Deno.UnsafePointer.of(screenBuffer)
+const rtcData = {
+  src: {
+    candidates: [] as RTCIceCandidate[],
+    offer: null as RTCSessionDescriptionInit | null,
+  },
+  dst: {
+    candidates: [] as RTCIceCandidate[],
+    answer: null as RTCSessionDescriptionInit | null,
+  },
+  reset() {
+    this.src.candidates = []
+    this.src.offer = null
+    this.dst.candidates = []
+    this.dst.answer = null
+  },
+};
+
+const bridge = k.createBridge({
+  codes: {
+    MOUSE_CLICK: 1,
+    MOUSE_MOVE_RELATIVE: 2,
+    MOUSE_MOVE_ABSOLUTE: 3,
+    MOUSE_SCROLL: 4,
+  },
+  rtc: {
+    src: {
+      addCandidate: (ctx: Context, c: RTCIceCandidate) => rtcData.src.candidates.push(c),
+      getCandidates: (ctx: Context) => rtcData.src.candidates,
+      setOffer: (ctx: Context, o: typeof rtcData.src.offer) => rtcData.src.offer = o,
+      getOffer: (ctx: Context) => rtcData.src.offer,
+    },
+    dst: {
+      addCandidate: (ctx: Context, c: RTCIceCandidate) => rtcData.dst.candidates.push(c),
+      getCandidates: (ctx: Context) => rtcData.dst.candidates,
+      setAnswer: (ctx: Context, a: typeof rtcData.dst.answer) => rtcData.dst.answer = a,
+      getAnswer: (ctx: Context) => rtcData.dst.answer,
+    },
+    reset: (ctx: Context) => rtcData.reset(),
+  },
+})
 
 app.get('/ws', (c) => {
   const { response, socket } = Deno.upgradeWebSocket(c.req.raw)
@@ -21,32 +57,24 @@ app.get('/ws', (c) => {
     const buffer = new Int32Array(ev.data)
 
     switch (buffer[0]) {
-      case 0xAA: {
+      case bridge.server.codes.MOUSE_CLICK: {
         MouseLib.symbols.mouse_click(buffer[2] === 1)
         break
       }
     
-      case 0xFF: {
-        const k = 2.65
+      case bridge.server.codes.MOUSE_MOVE_RELATIVE: {
+        const k = 1
         MouseLib.symbols.mouse_move(true, buffer[1] * k | 0, buffer[2] * k | 0)
         break
       }
     
-      case 0xBB: {
+      case bridge.server.codes.MOUSE_MOVE_ABSOLUTE: {
         MouseLib.symbols.mouse_move(false, buffer[1], buffer[2])
         break
       }
 
-      case 0xDD: {
+      case bridge.server.codes.MOUSE_SCROLL: {
         MouseLib.symbols.mouse_scroll(buffer[1], buffer[2])
-        break
-      }
-
-      case 0xEE: {
-        MouseLib.symbols.screenshot(scrrenBufferPtr, screenWidth, screenHeight).then(() => {
-          socket.send(screenBuffer)
-        })
-
         break
       }
     }
@@ -55,91 +83,222 @@ app.get('/ws', (c) => {
   return response
 })
 
-app.get('/', (_c) => k.html(
-  <>
-    <div id="app" class="h-screen flex flex-row p-6 space-x-4 select-none">
+const TailwindReset = await k.preload(
+  "style",
+  "https://esm.sh/@unocss/reset@0.56.5/tailwind.css",
+);
+
+const BaseLayout = (props: Props) => (
+  <main>
+    <k.head>
+      <TailwindReset />
+    </k.head>
+    {props.children}
+  </main>
+)
+
+app.get('/', (c) => {
+  return c.html(k.html(
+    <BaseLayout>
+      <div class="h-screen flex items-center justify-center space-x-10">
+        <a href="/host" class="flex items-center justify-center w-96 h-48 text-6xl font-medium border-2 border-black/20 rounded-xl uppercase hover:border-indigo-400 hover:bg-indigo-400/20 hover:text-white">🖥️</a>
+        <a href="/client" class="flex items-center justify-center w-96 h-48 text-6xl font-medium border-2 border-black/20 rounded-xl uppercase hover:border-indigo-400 hover:bg-indigo-400/20 hover:text-white">✏️</a>
+      </div>
+    </BaseLayout>
+  ))
+})
+
+app.get('/host', (c) => {
+  return c.html(k.html(
+    <BaseLayout>
+      <k.head>
+        <style>{'[v-cloak] { opacity: 0; }'}</style>
+      </k.head>
+
+      <div v-cloak v-scope class="h-screen flex items-center justify-center transition-opacity">
+        <button 
+          v-on:click="startStreaming()"
+          v-if="!streaming" 
+          class="py-3 px-8 font-medium border-2 border-black/20 rounded-md text-black/60 hover:border-indigo-400 hover:bg-indigo-400/20 hover:text-indigo-700">Start streaming</button>
+        <button 
+          v-on:click="establish()"
+          v-if="streaming && !connected" 
+          class="py-3 px-8 font-medium border-2 border-black/20 rounded-md text-black/60 hover:border-indigo-400 hover:bg-indigo-400/20 hover:text-indigo-700">Establish connection</button>
+        <p v-if="streaming && connected" class="font-mono text-4xl">🔴 We are live </p>
+      </div>
+
+      {bridge(async (imports) => {
+        const { createApp } = await import("https://unpkg.com/petite-vue@0.4.1/dist/petite-vue.es.js?module")
+
+        let src: RTCPeerConnection | null = null
+        
+        createApp({
+          streaming: false,
+          connected: false,
+          async startStreaming() {
+            if (src) {
+              src.close()
+            }
+
+            await imports.rtc.reset()
+            src = new RTCPeerConnection()
+
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+              video: {
+                displaySurface: "window",
+              },
+              audio: false,
+            }).catch(() => null);
+  
+            if (!stream) {
+              return;
+            }
+  
+            src.addTrack(stream.getVideoTracks().at(0) as MediaStreamTrack, stream);
+            src.addEventListener("icecandidate", (e) => {
+              if (e.candidate) {
+                imports.rtc.src.addCandidate(e.candidate);
+              }
+            });
+  
+            const srcOffer = await src.createOffer({
+              offerToReceiveVideo: true,
+            });
+  
+            await Promise.all([
+              imports.rtc.src.setOffer(srcOffer),
+              src.setLocalDescription(srcOffer),
+            ])
+
+            this.streaming = true
+          },
+          async establish() {
+            const dstAnswer = await imports.rtc.dst.getAnswer()
+          
+            if (dstAnswer) {
+              await src?.setRemoteDescription(dstAnswer)
+            }
+  
+            const dstCandidates = await imports.rtc.dst.getCandidates()
+  
+            if (dstCandidates) {
+              dstCandidates.forEach((c) => src?.addIceCandidate(c))
+            }
+  
+            await imports.rtc.reset()
+
+            this.connected = true
+          },
+        }).mount()
+      })}
+    </BaseLayout>
+  ))
+})
+
+app.get('/client', (c) => c.html(k.html(
+  <main>
+    <k.head>
+      <TailwindReset />
+    </k.head>
+
+    <div id="app" class="fixed inset-0 touch-none pointer-events-none h-screen flex flex-row p-6 space-x-4 select-none">
       <div class="flex flex-col justify-end gap-4">
+        <div 
+          v-on:touchmove="handleControllerTouch($event)"
+          v-on:touchstart="handleControllerTouch($event)"
+          v-on:touchend="handleControllerTouch($event)"
+          v-on:click="handleControllerClick()"
+          class="w-24 h-24 flex items-center justify-center rounded-md border border-stone-300 touch-none pointer-events-auto"></div>
+
+        <button 
+          v-on:click="establish()"
+          class="w-24 h-24 flex items-center justify-center rounded-md border border-indigo-400 text-indigo-400 bg-indigo-400/10 touch-none pointer-events-auto text-4xl">C</button>
+
         <button 
           v-bind:class="{
-            'bg-black text-white': !relative,
-            'bg-transparent text-black': relative,
+            'bg-black text-white border-black': !relative,
+            'bg-transparent text-black border-stone-300': relative,
           }"
           v-on:touchstart="relative = !relative"
-          class="w-24 h-24 flex items-center justify-center rounded-md border border-stone-300 touch-none pointer-events-auto">
-          <span class="text-4xl">{'{{ relative ? "R" : "A" }}'}</span>
+          class="w-24 h-24 flex items-center justify-center rounded-md border touch-none pointer-events-auto">
+          <span class="text-4xl">[[ relative ? "R" : "A" ]]</span>
         </button>
 
         <button 
           v-bind:class="{
-            'bg-black': pressing,
-            'bg-transparent': !pressing,
+            'bg-black border-black': pressing,
+            'bg-transparent border-stone-300 ': !pressing,
           }"
           v-on:touchstart="pressing = !pressing"
-          class="w-24 h-24 rounded-md border border-stone-300 touch-none pointer-events-auto"></button>
+          class="w-24 h-24 rounded-md border touch-none pointer-events-auto"></button>
       </div>
-      <div class="flex-1 flex flex-col space-y-3">
-        <div class="flex space-x-3">
-          <input v-model="offsetX" min="0" max="1000" step="10" type="range" class="flex-1" />
-          <input v-model="offsetY" min="0" max="1000" step="10" type="range" class="flex-1" />
-        </div>
+      <div class="flex-1 flex flex-col space-y-3 overflow-hidden">
         <div 
-          ref="container"
-          v-on:touchmove="handleTouch($event)"
-          v-on:touchstart="handleTouch($event)"
-          v-on:touchend="handleTouch($event)"
-          v-on:click="handleClick()"
+          v-on:touchmove="handleCanvasTouch($event)"
+          v-on:touchstart="handleCanvasTouch($event)"
+          v-on:touchend="handleCanvasTouch($event)"
+          v-on:click="handleCanvasClick()"
           class="flex-1 rounded-md border border-stone-300 touch-none pointer-events-auto overflow-hidden">
-          <canvas ref="canvas" class="w-full h-full"></canvas>
+          <div style="width: 1920px !important; height: 1080px !important;">
+            <video 
+              autoplay 
+              ref="video"
+              class="touch-none pointer-events-none"
+              v-bind:style="`transform: translate(${-offsetX}px, ${-offsetY}px)`">
+            </video>
+          </div>
         </div>
       </div>
     </div>
 
-    {k.script(async () => {
-      const { createApp, ref, watch, nextTick, onMounted } = await import("https://unpkg.com/vue@3.3.4/dist/vue.esm-browser.js")
+    {bridge(async (imports) => {
+      const { createApp, ref, watch, nextTick } = await import("https://unpkg.com/vue@3.4.21/dist/vue.esm-browser.prod.js")
       const socket = new WebSocket(`ws://${location.host}/ws`)
+      const buffer = new Int32Array(3)
+
+      function send(...args: number[]) {
+        buffer.set(args)
+        socket.send(buffer)
+      }
 
       createApp({
         setup() {
           const offsetX = ref(0)
           const offsetY = ref(0)
+
+          let controllerPrevX = 0
+          let controllerPrevY = 0
+          let controllerPrevClientX = 0
+          let controllerPrevClientY = 0
+
+          function handleControllerTouch(ev: TouchEvent) {
+            const br = (ev?.target as HTMLElement)?.getBoundingClientRect()
+            const { clientX, clientY } = ev.touches[0] ?? { clientX: controllerPrevClientX, clientY: controllerPrevClientY }
+            const [x, y] = [clientX - br.left, clientY - br.top]
+
+            if (ev.type === 'touchmove') {
+              offsetX.value += x - controllerPrevX
+              offsetY.value += y - controllerPrevY 
+              console.log(x, y)
+            }
+
+            controllerPrevX = x
+            controllerPrevY = y
+            controllerPrevClientX = clientX
+            controllerPrevClientY = clientY
+          }
+          
+          function handleControllerClick(ev: TouchEvent) {
+            offsetX.value = 0
+            offsetY.value = 0
+          }
+
           const pressing = ref(false)
           const relative = ref(true)
-          const buffer = new Int32Array(3)
-          const container = ref(null)
-          const canvas = ref(null)
-          const imageData = new ImageData(1920, 1080)
-
-          onMounted(() => {
-            const containerBoundRect = container.value.getBoundingClientRect()
-            canvas.value.width = containerBoundRect.width
-            canvas.value.height = containerBoundRect.height
-
-            const ctx: CanvasRenderingContext2D = canvas.value.getContext('2d')
-            
-            const redraw = () => {
-              ctx.clearRect(0, 0, containerBoundRect.width, containerBoundRect.height)
-              ctx.putImageData(imageData, -offsetX.value, -offsetY.value)
-            }
-
-            socket.onmessage = async (ev) => {
-              const receivedData = new Uint8ClampedArray(await ev.data.arrayBuffer())
-              imageData.data.set(receivedData)
-              redraw()
-            }
-
-            watch(offsetX, () => redraw())
-            watch(offsetY, () => redraw())
-
-            setInterval(() => {
-              buffer.set([0xEE])
-              socket.send(buffer)
-            }, 1000)
-          })
-
+          const video = ref(null)
 
           watch(pressing, () => {
-            buffer.set([0xAA, 0, pressing.value ? 1 : 0])
-            socket.send(buffer)
+            send(imports.codes.MOUSE_CLICK, 0, pressing.value ? 1 : 0)
           })
 
           let prevX = 0
@@ -147,26 +306,27 @@ app.get('/', (_c) => k.html(
           let prevClientX = 0
           let prevClientY = 0
 
-          function handleTouch(ev: TouchEvent) {
+          function handleCanvasTouch(ev: TouchEvent) {
             const br = (ev?.target as HTMLElement)?.getBoundingClientRect()
-            const { clientX, clientY } = ev.touches[0] ?? {clientX: prevClientX, clientY: prevClientY}
+            const { clientX, clientY } = ev.touches[0] ?? { clientX: prevClientX, clientY: prevClientY }
             const [x, y] = [clientX - br.left, clientY - br.top]
 
             if (ev.type === 'touchstart' && !relative.value) {
               if (ev.touches.length === 1) {
-                buffer.set([0xBB, x + Number(offsetX.value), y + Number(offsetY.value)])
-                socket.send(buffer)
+                send(imports.codes.MOUSE_MOVE_ABSOLUTE, x + Number(offsetX.value), y + Number(offsetY.value))
                 pressing.value = true
               }
             }
             
             if (ev.type === 'touchmove') {
               if (ev.touches.length === 1) {
-                buffer.set(relative.value ? [0xFF, x - prevX, y - prevY] : [0xBB, x + Number(offsetX.value), y + Number(offsetY.value)])
-                socket.send(buffer)
+                if (relative.value) {
+                  send(imports.codes.MOUSE_MOVE_RELATIVE, x - prevX, y - prevY)
+                } else {
+                  send(imports.codes.MOUSE_MOVE_ABSOLUTE, x + Number(offsetX.value), y + Number(offsetY.value))
+                }
               } else {
-                buffer.set([0xDD, x - prevX, y - prevY])
-                socket.send(buffer)
+                send(imports.codes.MOUSE_SCROLL, x - prevX, y - prevY)
               }
             }
 
@@ -182,17 +342,45 @@ app.get('/', (_c) => k.html(
             prevClientY = clientY
           }
 
-          function handleClick() {
+          function handleCanvasClick() {
             pressing.value = true
             nextTick(() => pressing.value = false)
           }
 
-          return { offsetX, offsetY, container, canvas, pressing, relative, handleTouch, handleClick } 
+          async function establish() {
+            const dst = new RTCPeerConnection();
+
+            dst.addEventListener("icecandidate", (e) => {
+              if (e.candidate) {
+                imports.rtc.dst.addCandidate(e.candidate);
+              }
+            });
+
+            dst.addEventListener("track", (ev) => {
+              video.value.srcObject = ev.streams[0];
+            });
+
+            const srcOffer = await imports.rtc.src.getOffer()
+            
+            if (srcOffer) {
+              await dst.setRemoteDescription(srcOffer)
+            } 
+            
+            const dstAnswer = await dst.createAnswer()
+            await imports.rtc.dst.setAnswer(dstAnswer)
+            await dst.setLocalDescription(dstAnswer)
+            await imports.rtc.src.getCandidates().then((srcCandidates) => {
+              srcCandidates.forEach((c) => dst.addIceCandidate(c))
+            })
+          }
+
+          return { offsetX, offsetY, handleControllerTouch, handleControllerClick, video, pressing, relative, handleCanvasTouch, handleCanvasClick, establish } 
         },
+        delimiters: ['[[', ']]'],
       }).mount('#app')
     })}
-  </>
-))
+  </main>
+)))
 
 Deno.serve({
   hostname: '0.0.0.0',
